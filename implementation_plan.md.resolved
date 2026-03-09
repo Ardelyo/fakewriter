@@ -1,0 +1,187 @@
+# FakeWriter — Implementation Plan
+
+A Windows desktop application that intercepts keystrokes at the OS level and replaces them with pre-defined text, making it look like the user is naturally typing the prepared text.
+
+## Technology Stack
+
+| Component | Technology | Rationale |
+|---|---|---|
+| Language | **Python 3.10+** | Native Windows API access via `ctypes`, fast development |
+| GUI | **customtkinter** | Modern dark-themed UI out of the box, lightweight |
+| Keyboard Hook | **ctypes + user32.dll** | Direct `WH_KEYBOARD_LL` hook — full OS-level interception |
+| Keystroke Injection | **ctypes + SendInput** | OS-native simulated input, accepted by all apps |
+| Foreground Detection | **ctypes + user32.dll** | `GetForegroundWindow` + `GetWindowText` for app targeting |
+| Overlay Widget | **tkinter Toplevel** | Transparent, always-on-top floating status widget |
+
+---
+
+## Proposed Changes
+
+### Project Structure
+
+```
+fakewriter/
+├── main.py                  # Entry point
+├── requirements.txt         # Dependencies
+├── core/
+│   ├── __init__.py
+│   ├── keyboard_hook.py     # WH_KEYBOARD_LL hook engine
+│   ├── character_injector.py # SendInput API wrapper
+│   ├── state_manager.py     # Text queue, pointer, modes
+│   └── app_detector.py      # Foreground window detection
+├── gui/
+│   ├── __init__.py
+│   ├── main_window.py       # Main application window
+│   └── floating_widget.py   # Status overlay widget
+└── assets/
+    └── icon.ico             # App icon (will generate)
+```
+
+---
+
+### Core Engine
+
+#### [NEW] [keyboard_hook.py](file:///c:/Users/X1%20CARBON/Downloads/fakewriter/core/keyboard_hook.py)
+
+The heart of FakeWriter. Uses Windows `SetWindowsHookExW` with `WH_KEYBOARD_LL` to globally intercept all keystrokes.
+
+- **Hook Installation**: Registers a low-level keyboard procedure using ctypes
+- **Keystroke Decision Logic**: For each `WM_KEYDOWN` / `WM_SYSKEYDOWN`:
+  - Check if FakeWriter is active
+  - Check if foreground app is a valid target (via `app_detector`)
+  - If modifier key (Ctrl, Alt, Shift, Win) → **pass-through**
+  - If hotkey combo detected → handle internally (toggle, pause, panic)
+  - Otherwise → **block** the keystroke and call `character_injector` with the next character from the queue
+- Returns `1` to block or calls `CallNextHookEx` to pass-through
+- Runs in a dedicated thread with its own message pump (`GetMessage` loop)
+
+#### [NEW] [character_injector.py](file:///c:/Users/X1%20CARBON/Downloads/fakewriter/core/character_injector.py)
+
+Sends replacement characters using Windows `SendInput` with `KEYBDINPUT` (Unicode scan code mode).
+
+- Uses `KEYEVENTF_UNICODE` flag to support any Unicode character including emoji
+- Sends both key-down and key-up events for realism
+- For special characters: `\n` sends VK_RETURN, `\t` sends VK_TAB
+
+#### [NEW] [state_manager.py](file:///c:/Users/X1%20CARBON/Downloads/fakewriter/core/state_manager.py)
+
+Thread-safe singleton managing all application state:
+
+- **Text Queue**: List of pre-defined text strings, pointer tracks current text + current char index
+- **Modes**: Backspace mode (Strict/Natural/AutoTypo), End behavior (Stop/Loop/Normal)
+- **Status**: Active / Paused / Done / Inactive
+- **Auto-Typo Engine**: When enabled, randomly (5-10% chance) injects a wrong character, then schedules a backspace + correct character after a short delay
+- **Backspace Handling**:
+  - Strict: block backspace entirely
+  - Natural: decrement pointer, let injector send a real backspace
+  - AutoTypo: handled by the auto-typo engine
+- **Settings**: Hotkey configs, whitelist/blacklist app names, end behavior
+
+#### [NEW] [app_detector.py](file:///c:/Users/X1%20CARBON/Downloads/fakewriter/core/app_detector.py)
+
+- Uses `GetForegroundWindow()` + `GetWindowThreadProcessId()` + `psutil` to get the process name of the active window
+- Compares against user-configured whitelist/blacklist
+- Returns `True/False` indicating whether FakeWriter should intercept in the current window
+
+---
+
+### GUI Layer
+
+#### [NEW] [main_window.py](file:///c:/Users/X1%20CARBON/Downloads/fakewriter/gui/main_window.py)
+
+Main application window built with `customtkinter`:
+
+- **Dark theme** with accent colors (emerald green for active, amber for paused)
+- **Text Input Area**: Large text box with placeholder text, supports paste
+- **Multi-Text Queue**: Ability to add multiple texts, shown as a list with drag-to-reorder
+- **Settings Panel**:
+  - Backspace Mode: Radio buttons (Strict / Natural / Auto-Typo)
+  - End Behavior: Radio buttons (Stop / Loop / Normal)
+  - Target App: Dropdown (All / Whitelist / Blacklist) + app name input
+- **Control Buttons**: START (▶), PAUSE (⏸), STOP (⏹) with state-dependent styling
+- **Hotkey Display**: Shows configured hotkeys
+- **Status Bar**: Shows Active/Paused/Done + character progress
+
+#### [NEW] [floating_widget.py](file:///c:/Users/X1%20CARBON/Downloads/fakewriter/gui/floating_widget.py)
+
+Transparent always-on-top overlay widget:
+
+- Small pill-shaped widget in the top-right corner
+- Shows: Status indicator (colored dot), progress `[32/150]`, next few chars preview
+- Draggable by the user
+- Semi-transparent background
+- Auto-hides when FakeWriter is inactive
+
+---
+
+### Entry Point
+
+#### [NEW] [main.py](file:///c:/Users/X1%20CARBON/Downloads/fakewriter/main.py)
+
+- Initializes `StateManager`, `AppDetector`, `KeyboardHook`, `CharacterInjector`
+- Starts the GUI (main thread)
+- Starts the keyboard hook in a background thread
+- Handles clean shutdown (unhook on exit)
+
+#### [NEW] [requirements.txt](file:///c:/Users/X1%20CARBON/Downloads/fakewriter/requirements.txt)
+
+```
+customtkinter>=5.2.0
+psutil>=5.9.0
+```
+
+> [!IMPORTANT]
+> **No `keyboard` or `pynput` libraries** — we use raw Windows API via `ctypes` for full control over hook behavior and keystroke blocking. This avoids the limitations of third-party libraries.
+
+---
+
+## Key Technical Decisions
+
+1. **ctypes over pynput/keyboard**: Third-party libraries abstract away hook control. We need to return `1` from the hook proc to block keystrokes — only direct ctypes gives this control.
+
+2. **Unicode SendInput**: Using `KEYEVENTF_UNICODE` scan codes instead of virtual key codes — this supports all characters including non-Latin scripts and emoji.
+
+3. **Separate thread for hook**: The keyboard hook requires a Windows message pump (`GetMessage` loop). This runs in a daemon thread so the GUI remains responsive.
+
+4. **customtkinter for GUI**: Provides a modern dark-themed look without manual styling. Much better aesthetics than raw tkinter.
+
+---
+
+## Verification Plan
+
+### Manual Testing (Primary)
+
+Since this application works at the OS level intercepting real keystrokes, automated unit tests are limited. The primary verification is manual:
+
+1. **Basic Interception Test**:
+   - Launch FakeWriter, enter text `Hello World`, click START
+   - Open Notepad
+   - Press random keys on the keyboard
+   - **Expected**: `Hello World` appears in Notepad character by character
+   - **Verify**: Each keystroke produces exactly one character from the pre-defined text
+
+2. **Modifier Pass-through Test**:
+   - While FakeWriter is active, press `Ctrl+A`, `Ctrl+C`, `Alt+Tab`
+   - **Expected**: System shortcuts work normally, no characters injected for modifier-only combos
+
+3. **Backspace Mode Test (Natural)**:
+   - Set backspace mode to Natural, enter text `abcdef`
+   - Activate, type 3 keys (→ `abc` appears), then press Backspace
+   - **Expected**: `c` is deleted, next keystroke produces `c` again
+
+4. **Hotkey Test**:
+   - Press `Ctrl+Shift+F` to toggle on/off
+   - Press `Ctrl+Shift+P` to pause/resume
+   - **Expected**: FakeWriter toggles/pauses correctly
+
+5. **End Behavior Test**:
+   - Enter short text `Hi`, set end behavior to Stop
+   - Activate, type 2 keys (→ `Hi`), type more keys
+   - **Expected**: No more characters appear after text is exhausted
+
+6. **Floating Widget Test**:
+   - Activate FakeWriter
+   - **Expected**: Floating widget appears showing status, progress, and preview text
+
+> [!NOTE]
+> All tests are manual because keystroke interception at the OS level cannot be reliably tested with automated frameworks. I will personally verify each scenario during development and record browser-based demonstrations where possible.
