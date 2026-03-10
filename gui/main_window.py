@@ -93,6 +93,10 @@ class MainWindow(ctk.CTk):
         self.stealth_switch = ctk.CTkSwitch(self.smart_frame, text="Stealth Mode", variable=self.stealth_var, command=self.update_settings)
         self.stealth_switch.grid(row=0, column=0, padx=10, pady=10)
 
+        self.line_sync_var = tk.BooleanVar(value=False)
+        self.line_sync_switch = ctk.CTkSwitch(self.smart_frame, text="Line Sync (Enter for \\n)", variable=self.line_sync_var, command=self.update_settings)
+        self.line_sync_switch.grid(row=0, column=1, padx=10, pady=10)
+
         self.speed_label = ctk.CTkLabel(self.smart_frame, text="Speed: 60 WPM", font=("Segoe UI", 12))
         self.speed_label.grid(row=0, column=1, padx=(20, 10), pady=10, sticky="e")
         
@@ -138,6 +142,7 @@ class MainWindow(ctk.CTk):
         self.state_manager.end_behavior = self.end_var.get()
         self.state_manager.target_app_mode = self.target_mode_var.get()
         self.state_manager.stealth_mode = self.stealth_var.get()
+        self.state_manager.line_sync = self.line_sync_var.get()
         self.state_manager.typing_speed_wpm = int(self.speed_slider.get())
         
         apps_str = self.target_apps_entry.get()

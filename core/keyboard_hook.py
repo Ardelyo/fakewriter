@@ -52,6 +52,19 @@ class KeyboardHook:
             return
 
         # 5. Interception and Injection
+        
+        # Line Sync Mode logic
+        is_newline = self.state_manager.next_char_is_newline()
+        if self.state_manager.line_sync:
+            # If next is newline, ONLY 'enter' can trigger it
+            if is_newline:
+                if event.name != 'enter':
+                    return False # Block other keys
+            # If physical key is 'enter', ONLY trigger if next is newline
+            elif event.name == 'enter':
+                # Optional: Block enter if next isn't newline to prevent accidental skips
+                return False
+
         # a. Typo Correction
         correction = self.state_manager.get_correction()
         if correction:

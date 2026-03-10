@@ -49,6 +49,7 @@ class StateManager:
         self.typing_speed_wpm = 60 # Words per minute (approx)
         self.variance = 0.3 # 30% speed variance
         self.typo_chance = 0.03 # 3% chance
+        self.line_sync = False # New feature!
         
         # Auto-Typo State
         self.typo_pending = False
@@ -129,6 +130,25 @@ class StateManager:
             char = current_text[self.current_char_index]
             self.current_char_index += 1
             return char
+
+    def next_char_is_newline(self):
+        with self._lock:
+            if not self.text_queue:
+                return False
+            
+            temp_text_idx = self.current_text_index
+            temp_char_idx = self.current_char_index
+            
+            if temp_text_idx >= len(self.text_queue):
+                return False
+                
+            current_text = self.text_queue[temp_text_idx]
+            if temp_char_idx >= len(current_text):
+                # We're at the end of a string in the queue, normally next is \n if we treat strings as lines
+                # But in this app, the input is usually one big string from a Textbox
+                return False
+            
+            return current_text[temp_char_idx] == '\n'
 
     def get_correction(self):
         with self._lock:
